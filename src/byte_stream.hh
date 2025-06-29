@@ -27,7 +27,6 @@ protected:
   uint64_t capacity_;
   bool error_ {};
   bool closed_ { false };
-  std::vector<char> overflow_ {}; // Buffer to hold the data unwritten
   std::vector<char> buffer_ {};
   uint64_t bytes_pushed_ { 0 };
   uint64_t bytes_popped_ { 0 };

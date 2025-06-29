@@ -14,13 +14,6 @@ void Writer::push( string data )
     buffer_.push_back( data[i] );
   }
 
-  if ( data_size > space_available ) {
-    uint64_t overflow_size = data_size - space_available;
-    for ( uint64_t i = 0; i < overflow_size; ++i ) {
-      overflow_.push_back( data[i + space_available] );
-    }
-  }
-
   bytes_pushed_ += bytes_to_push;
 }
 
