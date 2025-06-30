@@ -30,12 +30,12 @@ void Reassembler::insert( uint64_t first_index, string data, bool is_last_substr
 
   uint64_t new_start = first_index;
   uint64_t new_end = first_index + data.size() - 1;
-  std::string new_data = data;
+  string new_data = data;
 
   // Merge with overlap segments
   auto it = pending_data_.lower_bound( new_start );
   if ( it != pending_data_.begin() ) {
-    auto prev = std::prev( it );
+    auto prev = prev( it );
     uint64_t prev_start = prev->first;
     uint64_t prev_end = prev_start + prev->second.size() - 1;
     if ( prev_end >= new_start ) {
@@ -56,7 +56,7 @@ void Reassembler::insert( uint64_t first_index, string data, bool is_last_substr
     if ( seg_start > new_end + 1 ) {
       break;
     }
-    std::string const& seg_data = it->second;
+    string const& seg_data = it->second;
     uint64_t seg_end = seg_start + seg_data.size() - 1;
     if ( seg_end > new_end ) {
       uint64_t offset_in_seg = new_end - seg_start + 1;

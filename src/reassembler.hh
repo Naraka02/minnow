@@ -47,5 +47,4 @@ private:
   std::map<uint64_t, std::string> pending_data_;
   bool last_received_ { false };
   uint64_t stream_size_ { 0 };
-
 };
