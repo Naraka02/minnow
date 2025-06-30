@@ -6,6 +6,10 @@ ByteStream::ByteStream( uint64_t capacity ) : capacity_( capacity ) {}
 
 void Writer::push( string data )
 {
+  if ( closed_ || data.empty() ) {
+    return;
+  }
+
   uint64_t data_size = data.size();
   uint64_t space_available = available_capacity();
   uint64_t bytes_to_push = min( data_size, space_available );
@@ -47,6 +51,10 @@ string_view Reader::peek() const
 
 void Reader::pop( uint64_t len )
 {
+  if ( len <= 0 || len > buffer_.size() ) {
+    return;
+  }
+  
   buffer_.erase( buffer_.begin(), buffer_.begin() + len );
   bytes_popped_ += len;
 }

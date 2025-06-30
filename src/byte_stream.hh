@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
-#include <vector>
 
 class Reader;
 class Writer;
@@ -27,7 +26,7 @@ protected:
   uint64_t capacity_;
   bool error_ {};
   bool closed_ { false };
-  std::vector<char> buffer_ {};
+  std::string buffer_ {};
   uint64_t bytes_pushed_ { 0 };
   uint64_t bytes_popped_ { 0 };
 };
