@@ -26,6 +26,11 @@ public:
   uint64_t unwrap( Wrap32 zero_point, uint64_t checkpoint ) const;
 
   Wrap32 operator+( uint32_t n ) const { return Wrap32 { raw_value_ + n }; }
+  Wrap32 operator+=( uint32_t n )
+  {
+    raw_value_ += n;
+    return *this;
+  }
   bool operator==( const Wrap32& other ) const { return raw_value_ == other.raw_value_; }
 
 protected:

@@ -5,6 +5,7 @@
 #include "tcp_sender_message.hh"
 
 #include <functional>
+#include <map>
 
 class TCPSender
 {
@@ -42,4 +43,19 @@ private:
   ByteStream input_;
   Wrap32 isn_;
   uint64_t initial_RTO_ms_;
+  uint64_t RTO_ms_ { initial_RTO_ms_ };
+  uint64_t last_tick_ms_ { 0 };
+  uint64_t window_size_ { 1 };
+  Wrap32 last_seqno_ { isn_ };
+  Wrap32 last_ackno_ { isn_ };
+  bool is_syn_sent_ { false };
+  bool is_fin_sent_ { false };
+
+  struct TCPSegment
+  {
+    TCPSenderMessage message;
+    uint64_t retransmissions_count {};
+    uint64_t last_tick_ms {};
+  };
+  std::map<uint64_t, TCPSegment> outstanding_segments_ {};
 };
