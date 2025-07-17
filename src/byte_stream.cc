@@ -54,7 +54,7 @@ void Reader::pop( uint64_t len )
   if ( len <= 0 || len > buffer_.size() ) {
     return;
   }
-  
+
   buffer_.erase( buffer_.begin(), buffer_.begin() + len );
   bytes_popped_ += len;
 }
