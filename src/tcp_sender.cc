@@ -18,121 +18,113 @@ uint64_t TCPSender::sequence_numbers_in_flight() const
 uint64_t TCPSender::consecutive_retransmissions() const
 {
   uint64_t max_retransmissions_count = 0;
-  for ( auto it = outstanding_segments_.begin(); it != outstanding_segments_.end(); ++it ) {
-    if ( it->second.retransmissions_count > max_retransmissions_count ) {
-      max_retransmissions_count = it->second.retransmissions_count;
-    }
+  for ( const auto& [seqno, seg] : outstanding_segments_ ) {
+    max_retransmissions_count = max( max_retransmissions_count, seg.retransmissions_count );
   }
   return max_retransmissions_count;
 }
 
 void TCPSender::push( const TransmitFunction& transmit )
 {
-  if ( !is_syn_sent_ ) {
-    TCPSenderMessage syn_msg;
-    syn_msg.SYN = true;
-    syn_msg.seqno = isn_;
+  // Calculate available window capacity
+  Wrap32 window_end = last_ackno_ + ( window_size_ ? window_size_ : 1 );
+  uint64_t capacity
+    = window_end.unwrap( isn_, writer().bytes_pushed() ) - next_seqno_.unwrap( isn_, writer().bytes_pushed() );
 
-    int64_t curr_window_size = window_size_ > 0 ? window_size_ : 1;
-    uint64_t window_remaining = curr_window_size;
+  while ( capacity > 0 ) {
+    TCPSenderMessage message;
 
-    if ( window_remaining > 0 )
-      window_remaining--;
-
-    std::string payload;
-    uint64_t max_payload = std::min( window_remaining, TCPConfig::MAX_PAYLOAD_SIZE );
-    read( reader(), max_payload, payload );
-    syn_msg.payload = payload;
-
-    if ( !is_fin_sent_ && reader().is_finished() ) {
-      syn_msg.FIN = true;
-      is_fin_sent_ = true;
-      last_seqno_ = isn_ + 2 + payload.size();
-    } else {
-      last_seqno_ = isn_ + 1 + payload.size();
+    // Add SYN flag if not yet sent
+    if ( !is_syn_sent_ ) {
+      message.SYN = true;
+      is_syn_sent_ = true;
     }
-    outstanding_segments_[isn_.unwrap( isn_, 0 )]
-      = TCPSegment { .message = syn_msg, .last_tick_ms = last_tick_ms_ };
-    is_syn_sent_ = true;
-    transmit( syn_msg );
-    return;
-  }
 
-  uint64_t in_flight = sequence_numbers_in_flight();
-  uint64_t curr_window_size = window_size_ > 0 ? window_size_ : 1;
-  uint64_t window_remaining = ( curr_window_size > in_flight ) ? ( curr_window_size - in_flight ) : 0;
+    message.seqno = next_seqno_;
 
-  while ( window_remaining > 0
-          && ( !reader().is_finished() || ( !is_fin_sent_ && reader().is_finished() && window_remaining > 0 ) ) ) {
-    TCPSenderMessage data_msg;
-    data_msg.seqno = last_seqno_;
-    std::string payload;
-    uint64_t max_payload = std::min( window_remaining, TCPConfig::MAX_PAYLOAD_SIZE );
+    // Calculate payload size considering SYN flag
+    uint64_t payload_size = min( TCPConfig::MAX_PAYLOAD_SIZE, capacity - message.SYN );
+    string payload;
+    read( reader(), payload_size, payload );
 
-    read( reader(), max_payload, payload );
-    bool can_fin
-      = !is_fin_sent_ && reader().is_finished() && window_remaining > 0 && window_remaining > payload.size();
-
-    if ( payload.empty() && !can_fin )
-      break;
-
-    data_msg.payload = payload;
-    if ( can_fin ) {
-      data_msg.FIN = true;
+    // Add FIN flag if stream is finished and we have space
+    if ( !is_fin_sent_ && reader().is_finished() && payload.size() < capacity ) {
+      message.FIN = true;
       is_fin_sent_ = true;
     }
 
-    outstanding_segments_[last_seqno_.unwrap( isn_, writer().bytes_pushed() )]
-      = TCPSegment { .message = data_msg, .last_tick_ms = last_tick_ms_ };
-    last_seqno_ += data_msg.sequence_length();
-    data_msg.RST = input_.has_error();
-    transmit( data_msg );
-    window_remaining -= data_msg.sequence_length();
+    message.payload = move( payload );
+    message.RST = input_.has_error();
 
-    if ( can_fin )
+    // Skip empty segments
+    if ( message.sequence_length() == 0 ) {
       break;
+    }
 
+    // Reset timer for first segment in flight
+    if ( outstanding_segments_.empty() ) {
+      last_tick_ms_ = 0;
+      RTO_ms_ = initial_RTO_ms_;
+    }
+
+    // Transmit the segment
+    transmit( message );
+
+    // Store segment for retransmission tracking
+    outstanding_segments_[next_seqno_.unwrap( isn_, writer().bytes_pushed() )]
+      = { .message = message, .retransmissions_count = 0 };
+
+    // Update sequence number and remaining capacity
+    next_seqno_ += message.sequence_length();
+    capacity -= message.sequence_length();
+
+    // Stop after FIN segment
+    if ( message.FIN ) {
+      break;
+    }
   }
 }
 
 TCPSenderMessage TCPSender::make_empty_message() const
 {
-  return TCPSenderMessage { .seqno = last_seqno_, .RST = input_.has_error() };
+  return TCPSenderMessage { .seqno = next_seqno_, .RST = input_.has_error() };
 }
 
 void TCPSender::receive( const TCPReceiverMessage& msg )
 {
   window_size_ = msg.window_size;
+
   if ( msg.RST ) {
     input_.set_error();
     return;
   }
-  if ( !msg.ackno.has_value() )
+
+  if ( !msg.ackno.has_value() ) {
     return;
+  }
+
+  last_ackno_ = *msg.ackno;
 
   uint64_t abs_ackno = msg.ackno->unwrap( isn_, writer().bytes_pushed() );
+  uint64_t next_seqno = next_seqno_.unwrap( isn_, writer().bytes_pushed() );
 
-  if ( abs_ackno > last_seqno_.unwrap( isn_, writer().bytes_pushed() ) )
+  // Ignore invalid acknowledgments
+  if ( abs_ackno > next_seqno ) {
     return;
+  }
 
+  // Remove acknowledged segments
   auto it = outstanding_segments_.begin();
   while ( it != outstanding_segments_.end() ) {
     uint64_t seg_start = it->first;
     uint64_t seg_end = seg_start + it->second.message.sequence_length();
-    debug( "seg_end : {}, abs_ackno: {}", seg_end, abs_ackno );
+
     if ( seg_end <= abs_ackno ) {
       it = outstanding_segments_.erase( it );
+      last_tick_ms_ = 0;
+      RTO_ms_ = initial_RTO_ms_;
     } else {
-      ++it;
-    }
-  }
-
-  if ( abs_ackno > last_ackno_.unwrap( isn_, writer().bytes_pushed() ) ) {
-    last_ackno_ = Wrap32::wrap( abs_ackno, isn_ );
-    RTO_ms_ = initial_RTO_ms_;
-    if ( !outstanding_segments_.empty() ) {
-      outstanding_segments_.begin()->second.last_tick_ms = last_tick_ms_;
-      outstanding_segments_.begin()->second.retransmissions_count = 0;
+      break;
     }
   }
 }
@@ -141,17 +133,20 @@ void TCPSender::tick( uint64_t ms_since_last_tick, const TransmitFunction& trans
 {
   last_tick_ms_ += ms_since_last_tick;
 
-  if ( !outstanding_segments_.empty() ) {
-    auto it = outstanding_segments_.begin();
-    auto& oldest = it->second;
-    if ( last_tick_ms_ - oldest.last_tick_ms >= RTO_ms_ ) {
-      transmit( oldest.message );
-      oldest.last_tick_ms = last_tick_ms_;
-      if ( window_size_ > 0 ) {
-        RTO_ms_ *= 2;
-      }
-      oldest.retransmissions_count += 1;
+  if ( outstanding_segments_.empty() ) {
+    return;
+  }
+
+  auto it = outstanding_segments_.begin();
+  auto& oldest = it->second;
+
+  if ( last_tick_ms_ >= RTO_ms_ ) {
+    transmit( oldest.message );
+    last_tick_ms_ = 0;
+    oldest.retransmissions_count++;
+
+    if ( window_size_ > 0 ) {
+      RTO_ms_ *= 2;
     }
   }
 }
-
