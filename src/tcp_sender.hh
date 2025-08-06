@@ -53,7 +53,7 @@ private:
 
   struct TCPSegment
   {
-    TCPSenderMessage message;
+    TCPSenderMessage message {};
     uint64_t retransmissions_count {};
   };
   std::map<uint64_t, TCPSegment> outstanding_segments_ {};
