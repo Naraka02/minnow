@@ -4,6 +4,7 @@
 #include "ethernet_frame.hh"
 #include "ipv4_datagram.hh"
 
+#include <map>
 #include <memory>
 #include <queue>
 
@@ -82,4 +83,16 @@ private:
 
   // Datagrams that have been received
   std::queue<InternetDatagram> datagrams_received_ {};
+
+  // ARP table: maps IP addresses to {Ethernet address, timestamp}
+  std::map<uint32_t, std::pair<EthernetAddress, size_t>> arp_table_ {};
+
+  // Pending datagrams waiting for ARP resolution
+  std::map<uint32_t, std::queue<InternetDatagram>> pending_datagrams_ {};
+
+  // Recent ARP requests: maps IP addresses to timestamp of last request
+  std::map<uint32_t, size_t> recent_arp_requests_ {};
+
+  // Current time in milliseconds
+  size_t current_time_ms_ { 0 };
 };
